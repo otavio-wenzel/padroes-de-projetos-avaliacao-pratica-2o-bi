@@ -205,3 +205,59 @@ Adicionar nova Strategy **privada** na Factory + `enum` + `case`. Só isso.
 **Benefício:**
 
 * **Cliente continua falando “moderno”**, o Adapter fala “legado” por ele — e devolve uma resposta moderna clara, pronta para uso.
+
+
+
+
+Decisão e justificativa (para o README, linguagem simples)
+Versão completa
+
+Padrão principal: State. Cada estado da usina (DESLIGADA, OPERACAO_NORMAL, ALERTA_AMARELO, ALERTA_VERMELHO, EMERGENCIA, MANUTENCAO) é uma classe de estado que decide quando e para onde transicionar a partir das leituras (temperatura, pressão, radiação, falha no resfriamento, segundos > 400°C).
+
+Por que State aqui? O comportamento muda por estado (regras diferentes em cada fase) e as transições precisam ser controladas/no lugar certo, sem if/else gigantes. Cada estado encapsula suas regras, e o Context (UsinaNuclear) coordena e aplica políticas de segurança globais (ex.: “Emergência só depois de Vermelho”, proibir “Emergência → Normal” direto).
+
+Regras implementadas:
+
+OPERACAO_NORMAL → AMARELO: temperatura > 300°C.
+
+AMARELO → VERMELHO: temperatura > 400°C por mais de 30s.
+
+VERMELHO → EMERGENCIA: somente se falha do resfriamento.
+
+Prevenir ciclos perigosos: p.ex., não permite EMERGENCIA → NORMAL direto. Recuo é controlado (Emergência → Vermelho → Amarelo → Normal).
+
+EMERGENCIA só após VERMELHO: reforçado no Context (trava passouPorVermelho).
+
+Modo MANUTENCAO: sobrepõe a lógica normal e congela o estado até o operador desligar a manutenção (sem transições inadvertidas).
+
+Parameter Object (Medidas): junta todos os sinais (SRP e legibilidade).
+
+Factory Method (EstadoFactory): cria estados por EstadoId, escondendo as classes concretas (estilo “private class”/final).
+
+SOLID:
+
+SRP: cada classe com um papel único (estado decide; context orquestra; Medidas carrega dados; Factory cria).
+
+OCP: adicionar estado/regra nova sem quebrar cliente (só estende).
+
+LSP/ISP: contrato EstadoUsina simples e universal (avaliar(...)).
+
+DIP: UsinaNuclear trabalha com abstração EstadoUsina, não com classes concretas.
+
+Versão resumida
+
+Escolha: State porque o comportamento varia por estado e precisamos validar transições com regras específicas.
+
+Regras-chave codificadas:
+
+Normal → Amarelo (temp > 300°C)
+
+Amarelo → Vermelho (temp > 400°C por >30s)
+
+Vermelho → Emergência (falha no resfriamento)
+
+Emergência só após Vermelho; sem “Emergência → Normal” direto.
+
+Modo Manutenção: congela o sistema (sobrepõe lógica normal) até o operador desligar.
+
+Design limpo: Medidas (Parameter Object), EstadoFactory (concretas privadas), UsinaNuclear (Context) — SRP/OCP/DIP respeitados.
