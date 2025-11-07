@@ -97,3 +97,111 @@ SRP (papéis claros), OCP (novo algoritmo sem mexer no cliente), LSP/ISP (contra
 
 **Como evoluir:**
 Adicionar nova Strategy **privada** na Factory + `enum` + `case`. Só isso.
+
+
+
+# Questão 02 — Justificativa de Design (para colar no `README.md`)
+
+## Versão completa (explicada, linguagem simples)
+
+### 1) O problema que precisávamos resolver
+
+* Temos uma **interface moderna** simples:
+  `ProcessadorTransacoes.autorizar(String cartao, double valor, String moeda)`
+* Precisamos falar com um **sistema bancário legado** que só entende:
+  `processarTransacao(HashMap<String, Object> parametros)`
+* O **legado exige formatos e campos próprios** (ex.: moeda como código numérico e um **campo obrigatório** que **não existe** na interface moderna — usamos `canal` como exemplo, p.ex. `"ECOM"` ou `"POS"`).
+* Além disso, a integração deve ser **bidirecional**:
+
+  1. **Pedido moderno → formato legado**
+  2. **Resposta do legado → formato moderno** (um DTO claro para o domínio atual)
+
+### 2) Decisão: **Adapter** (com utilitário de moeda)
+
+* **Adapter (`LegadoAdapter`)**: expõe o **contrato moderno** e **tradu z** para a **assinatura legada** (e vice-versa).
+
+  * Entrada moderna → `HashMap` legado com **todas as chaves** esperadas.
+  * Saída legado (`HashMap`) → `Autorizacao` (DTO moderno, campos claros).
+* **`CurrencyCodec`**: converte **ISO ↔ código legado** conforme a restrição:
+  `USD=1, EUR=2, BRL=3`.
+
+> Resultado: o **cliente só conhece a interface moderna**, enquanto o Adapter “fala a língua do legado” sem **quebrar** a arquitetura atual.
+
+### 3) Como o Adapter resolve cada requisito
+
+* **Assinaturas incompatíveis** → o Adapter mapeia `autorizar(...)` para `processarTransacao(HashMap)` **sem alterar o legado**.
+* **Bidirecionalidade** → converte **ida e volta** (pedido e resposta).
+* **Campo obrigatório inexistente no moderno** → o Adapter **injeta** `canal` (com *default* seguro, ex.: `"ECOM"`), atendendo o legado sem poluir a interface moderna.
+* **Códigos de moeda** → `CurrencyCodec.toLegacyCode("EUR") → 2` e `toISO(2) → "EUR"`.
+
+### 4) Por que **Adapter** é a melhor escolha aqui?
+
+* O problema é, essencialmente, de **compatibilizar interfaces**: temos um contrato novo e um contrato antigo **incompatíveis**.
+* **Adapter** foi feito exatamente para isso: “fazer dois mundos conversarem” **sem mudar** nenhum dos lados.
+* Alternativas e por que não usar:
+
+  * **Strategy**: seleciona **algoritmos intercambiáveis** com a mesma interface; não resolve **mapeamento de assinatura** e nem campos/formatos diferentes.
+  * **Facade**: simplifica uma **sub-sistema** complexo, mas **não traduz** assinaturas incompatíveis (poderia ser complementar, não substituto).
+  * **Decorator**: adiciona comportamento sem mudar interface; não converge tipos diferentes.
+  * **Adapter + Facade**: poderia ser combinado se o legado fosse enorme; aqui o Adapter sozinho atende com clareza.
+
+### 5) SOLID aplicado (onde e como)
+
+* **SRP (Responsabilidade Única)**:
+
+  * `LegadoAdapter`: **só** traduz chamadas (moderno ↔ legado).
+  * `CurrencyCodec`: **só** mapeia moedas.
+  * `Autorizacao`: **só** representa a resposta moderna.
+* **OCP (Aberto/Fechado)**:
+
+  * Se o legado pedir novo campo, ajustamos **apenas** o Adapter (e opcionalmente criamos *helpers*).
+  * O **contrato moderno não muda**.
+* **LSP (Substituição de Liskov)**:
+
+  * `LegadoAdapter` **implementa** `ProcessadorTransacoes`; qualquer cliente que usa a interface moderna pode usá-lo **sem surpresas**.
+* **ISP (Segregação de Interfaces)**:
+
+  * Mantemos a **interface moderna enxuta** (`autorizar(...)`) em vez de espalhar chaves/`HashMap`.
+* **DIP (Inversão de Dependência)**:
+
+  * O cliente depende de **abstração** (`ProcessadorTransacoes`), não da lib legada.
+
+### 6) Benefícios práticos
+
+* **Protege o código moderno** dos detalhes feios/obsoletos do legado.
+* **Facilita testes**: podemos simular o legado com um *stub* e validar o mapeamento.
+* **Evolutivo**: novos campos do legado entram **só no Adapter**.
+* **Clareza de domínio**: o DTO `Autorizacao` é legível (mensagem, aprovado, código, moeda ISO).
+
+### 7) Riscos e mitigação
+
+* **Mudanças do legado** (novas chaves, novos códigos): mitigado centralizando conversões no Adapter/Codec.
+* **Moedas não suportadas**: validação explícita com mensagens claras (lança exceção se ISO inválido).
+
+---
+
+## Versão resumida (direta, mas não telegráfica)
+
+**Objetivo:** integrar a interface moderna `autorizar(cartao, valor, moeda)` com o legado `processarTransacao(HashMap)`, **indo e voltando**, incluindo campo obrigatório do legado e **códigos de moeda** (USD=1, EUR=2, BRL=3).
+
+**Escolha:** **Adapter (`LegadoAdapter`)**
+
+* Converte **requisições** modernas para o **formato legado** (inclui o campo obrigatório `canal`).
+* Converte **respostas** do legado (`HashMap`) para o **DTO moderno** `Autorizacao`.
+* Usa **`CurrencyCodec`** para mapear **ISO ↔ código** (ex.: **EUR ↔ 2**).
+
+**Por que Adapter:**
+
+* O problema é **compatibilizar interfaces** diferentes **sem alterar** o legado.
+* Strategy/Decorator/Facade não resolvem a **tradução de assinatura e tipos**; Adapter foi criado para isso.
+
+**SOLID (na prática):**
+
+* **SRP:** Adapter só traduz; Codec só converte moeda; DTO só representa resposta.
+* **OCP:** mudanças do legado isoladas no Adapter/Codec; contrato moderno permanece.
+* **DIP:** clientes dependem de `ProcessadorTransacoes` (abstração).
+* **LSP/ISP:** Adapter cumpre o contrato moderno e mantém interface simples.
+
+**Benefício:**
+
+* **Cliente continua falando “moderno”**, o Adapter fala “legado” por ele — e devolve uma resposta moderna clara, pronta para uso.
