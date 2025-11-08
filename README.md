@@ -261,3 +261,73 @@ Emergência só após Vermelho; sem “Emergência → Normal” direto.
 Modo Manutenção: congela o sistema (sobrepõe lógica normal) até o operador desligar.
 
 Design limpo: Medidas (Parameter Object), EstadoFactory (concretas privadas), UsinaNuclear (Context) — SRP/OCP/DIP respeitados.
+
+
+
+
+# Questão 04 — Justificativa da escolha do padrão (para o `README.md`)
+
+## Versão completa (explicada em linguagem simples)
+
+### O problema, em uma frase
+
+Precisamos aplicar **várias validações diferentes** sobre a mesma NF-e, **em sequência**, com **condições** (pular alguns passos quando outro falha), **parar cedo** quando houver muitas falhas (circuit breaker), **desfazer mudanças** se algo adiante der errado (rollback) e **respeitar timeouts** individuais — tudo isso **sem acoplar** o código da aplicação aos detalhes de cada validador.
+
+### Padrão escolhido: **Chain of Responsibility (CoR)**
+
+CoR modela um **encadeamento de validadores**, onde **cada nó** decide se:
+
+* processa a requisição (a NF-e),
+* **passa adiante** para o próximo,
+* **interrompe** a cadeia (no nosso caso, por política de **circuit breaker** ou por falha/timeout).
+
+Isso permite **adicionar, remover ou reordenar** validadores **sem mexer** no restante do sistema. Cada validador fica **isolado**, com sua própria responsabilidade (schema, certificado, regras fiscais, banco, SEFAZ), e o orquestrador aplica as **políticas transversais** (condicional, breaker, rollback, timeout).
+
+### Por que CoR atende exatamente aos requisitos
+
+* **“Cada validador especializado verifica um aspecto”** → cada handler na cadeia é um validador de responsabilidade única.
+* **“Validações condicionais (se X falhar, pule Y)”** → o orquestrador conhece o histórico; se houve falha anterior, **não chama** validadores que exigem cadeia limpa (como Regras Fiscais e SEFAZ).
+* **“Circuit breaker após 3 falhas”** → o contexto da cadeia acumula falhas; ao atingir 3, **interrompe** a execução.
+* **“Rollback para validadores que modificam o documento”** → sempre que um validador efetua uma mudança (ex.: gravação em BD), ele **registra** uma ação de rollback no **contexto**; se algum posterior falhar, a engine aciona o **rollback** de tudo que foi registrado.
+* **“Timeout individual por validador”** → cada handler roda envolto em um **executor com timeout** próprio; se estourar, retorna **TIMEOUT** e conta como falha (influenciando o breaker e as condicionais).
+* **“Validadores 3 e 5 só executam se os anteriores passarem”** → o CoR/engine checa o estado (nenhuma falha anterior) antes de invocá-los.
+
+### Por que **não** escolhemos outros padrões
+
+* **Strategy**: troca de algoritmo com a **mesma** interface; aqui precisamos **encadear** passos e **pular/ interromper** — não é só escolher “um algoritmo”.
+* **State**: muda comportamento por **estado interno** do objeto; nosso foco é **pipeline de validações** com políticas de fluxo, não a máquina de estados do domínio.
+* **Template Method**: definiria um esqueleto fixo com ganchos; **engessa a ordem** e dificulta **pular/ interromper** dinamicamente (especialmente com breaker e timeouts).
+* **Observer**: notificação assíncrona; não precisamos “avisar interessados”, e sim **controlar a sequência e o resultado** de cada etapa.
+* **Facade**: simplifica acesso a subsistemas, mas **não resolve controle fino** de fluxo (pular, parar, rollback, timeout) etapa a etapa.
+* **Pipeline puro** sem CoR: possível, mas você reimplementaria, na prática, o que o CoR já oferece (handlers encadeados com repasse/curto-circuito).
+
+### SOLID aplicado
+
+* **SRP**: cada validador faz **uma** checagem; a engine **orquestra**; o contexto guarda **estado transversal** (falhas, rollback, timeouts).
+* **OCP**: novo validador entra **sem mudar** os existentes — só encadeia outro nó.
+* **LSP/ISP**: contrato de validador **mínimo e estável** (id/validate/flag condicional).
+* **DIP**: a engine depende da **abstração** `Validator`, não das classes concretas.
+
+### Benefícios práticos
+
+* **Extensível**: fica fácil incluir um 6º validador (ex.: antifraude) sem tocar no resto.
+* **Observabilidade**: cada nó reporta seu próprio **PASS/FAIL/TIMEOUT** — logs claros.
+* **Robustez**: **parada antecipada** evita custo desnecessário; **rollback** garante consistência mesmo quando há falhas no fim da cadeia.
+
+---
+
+## Versão resumida (direta, para leitura rápida)
+
+**Escolha:** **Chain of Responsibility (CoR)** porque precisamos executar **múltiplas validações em sequência**, **pular** etapas quando houver falhas anteriores, **interromper** após **3 falhas** (circuit breaker), **desfazer mudanças** (rollback) e aplicar **timeout por etapa** — tudo **desacoplado** e **fácil de estender**.
+
+**Por que funciona aqui:**
+
+* Cada validador é um **handler** especializado (schema, certificado, fiscal, BD, SEFAZ).
+* Condicionais: os validadores 3 e 5 **só rodam** se **ninguém antes falhou**.
+* Circuit breaker: ao atingir 3 falhas, a cadeia **para**.
+* Rollback: mudanças do BD são **desfeitas** se algo depois falhar.
+* Timeout: cada validador tem **tempo máximo** próprio.
+
+**Por que não Strategy/State/Template/Observer:** eles não resolvem bem o **encadeamento com controle de fluxo** (pular/ interromper/ fazer rollback/ timeout). O CoR foi feito exatamente para **processar pedidos passando por uma cadeia de handlers** com **curto-circuito** quando necessário.
+
+**SOLID:** SRP (responsabilidades separadas), OCP (validador novo entra fácil), DIP (engine → interface `Validator`).
